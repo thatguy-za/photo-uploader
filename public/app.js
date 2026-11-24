@@ -37,6 +37,7 @@ async function api(path, { json, method, body } = {}) {
 let me = null;
 let tab = 'photos';
 let albumPath = '';
+let adminPath = '';           // folder currently open in the admin folder browser
 let queue = [];               // [{file, state: 'wait'|'up'|'done'|'err', msg, note}]
 let sharedFromCache = false;  // queue came from the Android share sheet
 let onQueueChange = null;     // set by the upload view while it is on screen
@@ -519,35 +520,51 @@ async function viewAccount(el) {
 
 // ---------- admin ----------
 async function viewAdmin(el) {
+  let browse;
+  try { browse = await api('/api/admin/browse?path=' + encodeURIComponent(adminPath)); }
+  catch { adminPath = ''; browse = await api('/api/admin/browse?path='); } // folder vanished: back to /data
   const [users, folders] = await Promise.all([api('/api/admin/users'), api('/api/admin/folders')]);
+  const bparts = adminPath.split('/').filter(Boolean);
+  const bcrumbs = [`<a href="#" data-bp="">/data</a>`].concat(
+    bparts.map((p, i) => `<a href="#" data-bp="${esc(bparts.slice(0, i + 1).join('/'))}">${esc(p)}</a>`)).join(' / ');
   const ownerId = Math.min(...users.map((u) => u.id)); // the first admin: can't be demoted or deleted
   el.innerHTML = `
     <h1>Admin</h1>
     <h2>Folders</h2>
-    <p class="muted">Every folder inside <code>/data</code>. Mount extra volumes as <code>/data/&lt;name&gt;</code> or create one here.</p>
-    <div class="chips">${folders.map((f) => `<span class="chip">${esc(f)}</span>`).join('') || '<span class="muted">none yet</span>'}</div>
-    <form id="nf" class="row"><input type="text" name="name" placeholder="New folder name" required><button>Create</button></form>
+    <p class="muted">Browse everything under <code>/data</code>. The folders at the top level are the libraries you give users access to below; mount extra volumes as <code>/data/&lt;name&gt;</code> or create folders here.</p>
+    <div class="card">
+      <div class="crumbs" style="padding:0 0 8px">${bcrumbs}</div>
+      ${browse.dirs.map((d) => `
+        <div class="item"><a href="#" class="name" data-bp="${esc([...bparts, d.name].join('/'))}">📁 ${esc(d.name)}${bparts.length ? '' : ' <span class="chip">library</span>'}</a>
+          <span class="muted">${d.folders} folder${d.folders === 1 ? '' : 's'} · ${d.files} file${d.files === 1 ? '' : 's'}</span></div>`).join('')
+        || '<p class="muted" style="margin:6px 0">No sub-folders here.</p>'}
+      <p class="muted" style="margin:8px 0">${browse.files} file${browse.files === 1 ? '' : 's'} directly in this folder</p>
+      <form id="nf" class="row"><input type="text" name="name" placeholder="New folder in ${esc('/data' + (adminPath ? '/' + adminPath : ''))}" required><button>Create</button></form>
+      <p class="err" id="fe"></p>
+    </div>
     <h2>Users</h2>
     ${users.map((u) => {
       const isOwner = u.id === ownerId, isSelf = u.username === me.username;
       const canEdit = !isOwner && !isSelf; // type change / delete
       return `
       <div class="card" data-id="${u.id}">
-        <div class="row" style="justify-content:space-between"><strong>${esc(u.username)}${isSelf ? ' (you)' : ''}</strong>
-          <span class="muted">${isOwner ? 'Owner · ' : ''}${u.hasToken ? 'has API token' : ''}</span></div>
-        <label>User type</label>
-        ${canEdit
-          ? `<select data-type><option value="standard" ${u.isAdmin ? '' : 'selected'}>Standard user</option><option value="admin" ${u.isAdmin ? 'selected' : ''}>Admin</option></select>`
-          : `<p style="margin:0">${u.isAdmin ? 'Admin' : 'Standard user'}</p>`}
-        ${u.isAdmin ? '<p class="muted">Admins can manage users and folders and see every folder.</p>'
-          : folders.length ? `<div class="perm-grid" style="margin:10px 0">${folders.map((f) => `
-          <span>${esc(f)}</span>
-          <select data-folder="${esc(f)}">
+        <div class="user-head">
+          <div class="who"><strong>${esc(u.username)}${isSelf ? ' (you)' : ''}</strong>
+            ${isOwner || u.hasToken ? `<span class="sub">${[isOwner ? 'Owner' : '', u.hasToken ? 'API token' : ''].filter(Boolean).join(' · ')}</span>` : ''}</div>
+          ${canEdit
+            ? `<select class="sm" data-type aria-label="User type"><option value="standard" ${u.isAdmin ? '' : 'selected'}>Standard user</option><option value="admin" ${u.isAdmin ? 'selected' : ''}>Admin</option></select>`
+            : `<span class="type-badge">${u.isAdmin ? 'Admin' : 'Standard user'}</span>`}
+        </div>
+        ${u.isAdmin ? '<p class="muted" style="margin:0">Full access to every folder, and can manage users.</p>'
+          : folders.length ? `<div class="perm-grid">${folders.map((f) => `
+          <span class="fname">${esc(f)}</span>
+          <select class="sm" data-folder="${esc(f)}" aria-label="Access to ${esc(f)}">
             ${[['', 'No access'], ['read', 'Read'], ['upload', 'Read & upload']].map(([v, l]) => `<option value="${v}" ${(u.perms[f] || '') === v ? 'selected' : ''}>${l}</option>`).join('')}
-          </select>`).join('')}</div>` : '<p class="muted">Create a folder first.</p>'}
-        <div class="row">${u.isAdmin ? '' : '<button data-act="save">Save access</button>'}
-          <button data-act="pw" class="secondary">Reset password</button>
-          ${canEdit ? '<button data-act="del" class="danger">Delete</button>' : ''}</div>
+          </select>`).join('')}</div>` : '<p class="muted" style="margin:0">Create a folder first.</p>'}
+        <div class="actions">
+          ${u.isAdmin ? '<span></span>' : '<button data-act="save">Save access</button>'}
+          <span class="more"><button data-act="pw" class="secondary sm">Reset password</button>
+          ${canEdit ? '<button data-act="del" class="danger sm">Delete</button>' : ''}</span></div>
         <p class="muted msg"></p>
       </div>`;
     }).join('')}
@@ -562,9 +579,10 @@ async function viewAdmin(el) {
 
   $('#nf').onsubmit = async (ev) => {
     ev.preventDefault();
-    try { await api('/api/admin/folders', { json: { name: new FormData(ev.target).get('name') } }); render(); }
-    catch (e) { alert(e.message); }
+    try { await api('/api/admin/folders', { json: { path: adminPath, name: new FormData(ev.target).get('name') } }); render(); }
+    catch (e) { $('#fe').textContent = e.message; }
   };
+  el.querySelectorAll('[data-bp]').forEach((a) => a.onclick = (ev) => { ev.preventDefault(); adminPath = a.dataset.bp; render(); });
   $('#nu').onsubmit = async (ev) => {
     ev.preventDefault();
     const fd = new FormData(ev.target);

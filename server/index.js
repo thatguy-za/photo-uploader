@@ -536,11 +536,36 @@ app.put('/api/admin/users/:id/perms', async (req) => {
 
 app.get('/api/admin/folders', async (req) => { requireAdmin(req); return subdirs(DATA); });
 
+// Folder browser: sub-folders of any directory under /data, with a rough size hint for each.
+app.get('/api/admin/browse', async (req) => {
+  requireAdmin(req);
+  const p = resolveRel(DATA, req.query.path);
+  const st = await fs.stat(p.abs).catch(() => null);
+  if (!st?.isDirectory()) throw httpErr(404, 'Folder not found');
+  const ents = (await fs.readdir(p.abs, { withFileTypes: true })).filter((e) => !e.name.startsWith('.'));
+  const dirs = await Promise.all(
+    ents.filter((e) => e.isDirectory()).map(async (e) => {
+      const inner = await fs.readdir(path.join(p.abs, e.name), { withFileTypes: true }).catch(() => []);
+      const vis = inner.filter((x) => !x.name.startsWith('.'));
+      return { name: e.name, folders: vis.filter((x) => x.isDirectory()).length, files: vis.filter((x) => x.isFile()).length };
+    })
+  );
+  dirs.sort((a, b) => a.name.localeCompare(b.name));
+  return { path: p.segs.join('/'), dirs, files: ents.filter((e) => e.isFile()).length };
+});
+
+// Create a folder inside `path` (default: /data itself, i.e. a new top-level library).
 app.post('/api/admin/folders', async (req) => {
   requireAdmin(req);
   const name = str(req.body?.name, 100).trim();
   if (!validFolderName(name)) throw httpErr(400, 'Invalid folder name');
-  await fs.mkdir(path.join(DATA, name), { recursive: true });
+  const parent = resolveRel(DATA, req.body?.path);
+  if (parent.segs.length > 5) throw httpErr(400, 'Folder is nested too deeply');
+  const pst = await fs.stat(parent.abs).catch(() => null);
+  if (!pst?.isDirectory()) throw httpErr(404, 'Parent folder not found');
+  try { await fs.mkdir(path.join(parent.abs, name)); }
+  catch (e) { throw httpErr(e.code === 'EEXIST' ? 409 : 500, e.code === 'EEXIST' ? 'That folder already exists' : 'Could not create the folder (check PUID/PGID can write there)'); }
+  infoCache.clear();
   return { ok: true };
 });
 
