@@ -1,0 +1,21 @@
+{
+  "name": "photo-uploader",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Lightweight self-hosted photo upload server with a PWA frontend",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server/index.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/multipart": "^10.1.9",
+    "@fastify/static": "^10.1.12",
+    "exif-reader": "^2.0.3",
+    "fastify": "^5.12.8",
+    "sharp": "^0.35.5"
+  }
+}

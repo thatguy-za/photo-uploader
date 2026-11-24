@@ -1,0 +1,14 @@
+services:
+  photo-uploader:
+    image: ghcr.io/thatguy-za/photo-uploader:latest
+    container_name: photo-uploader
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+    volumes:
+      - ./photos:/data               # each sub-folder here becomes an uploadable folder
+      # - /mnt/family:/data/Family   # or map several folders individually
+      - ./appdata:/appdata           # database + thumbnail cache
+    ports:
+      - "8080:8080"
